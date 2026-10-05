@@ -1,1 +1,389 @@
+Sprint 8 — Helm Quick Refresh
+1. Check Helm
+helm version
 
+Check Helm repositories:
+helm repo list
+
+Add Bitnami if needed:
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+
+2. Create a Helm Chart
+Create a working directory:
+mkdir -p ~/helm-labs
+cd ~/helm-labs
+
+Create a chart:
+helm create jfoods-nginx
+
+Enter it:
+cd jfoods-nginx
+
+You will get:
+jfoods-nginx/
+├── Chart.yaml
+├── values.yaml
+├── charts/
+└── templates/
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── serviceaccount.yaml
+    ├── ingress.yaml
+    ├── hpa.yaml
+    ├── httproute.yaml
+    ├── _helpers.tpl
+    ├── NOTES.txt
+    └── tests/
+
+3. Important Chart Files
+Chart.yaml
+Contains chart metadata:
+apiVersion: v2
+name: jfoods-nginx
+version: 0.1.0
+appVersion: "1.16.0"
+
+Remember:
+Chart version → version of the Helm package
+App version   → version of the application
+
+4. values.yaml
+This contains configurable/default values.
+Our simple values:
+replicaCount: 3
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  tag: "1.27"
+
+service:
+  type: ClusterIP
+  port: 80
+
+We later added:
+config:
+  APP_ENV: production
+  LOG_LEVEL: info
+
+And for the Secret exercise:
+secret:
+  username: demo-user
+  password: demo-password
+
+Do not use real passwords in values.yaml.
+5. Helm Templates
+Templates are under:
+templates/
+
+Example:
+templates/deployment.yaml
+templates/service.yaml
+templates/configmap.yaml
+templates/secret.yaml
+
+Helm variables use:
+.Values
+
+Example:
+replicas: {{ .Values.replicaCount }}
+
+If:
+replicaCount: 3
+
+Helm generates:
+replicas: 3
+
+6. Render the Chart — Very Important
+Before installing:
+helm template nginx-demo .
+
+This does not change AKS.
+It only renders:
+values.yaml
+     +
+templates/
+     ↓
+Kubernetes YAML
+
+Useful:
+helm template nginx-demo .
+
+or:
+helm template nginx-demo . | less
+
+Specific section:
+helm template nginx-demo . | grep -A15 "kind: Deployment"
+
+7. Create Namespace
+We used a separate namespace for our Helm lab:
+kubectl create namespace helm-demo
+
+Check:
+kubectl get namespace helm-demo
+
+8. Install Helm Chart
+From inside:
+~/helm-labs/jfoods-nginx
+
+run:
+helm install nginx-demo . -n helm-demo
+
+Here:
+nginx-demo → Release name
+.          → Current chart
+helm-demo  → Kubernetes namespace
+
+Check:
+helm list -n helm-demo
+
+9. Check Kubernetes Resources
+kubectl get all -n helm-demo
+
+Pods:
+kubectl get pods -n helm-demo
+
+Deployment:
+kubectl get deployment -n helm-demo
+
+Services:
+kubectl get svc -n helm-demo
+
+10. Helm Release
+Remember:
+Chart   = package / blueprint
+Release = installed instance of the chart
+
+Example:
+Chart:
+jfoods-nginx
+
+Release:
+nginx-demo
+
+You can install the same chart multiple times:
+helm install nginx-dev .
+helm install nginx-prod .
+
+Same chart, different releases.
+11. Upgrade
+Change something in values.yaml.
+For example:
+replicaCount: 5
+
+Preview:
+helm template nginx-demo .
+
+Then upgrade:
+helm upgrade nginx-demo . -n helm-demo
+
+Check:
+helm list -n helm-demo
+
+You will see:
+REVISION  2
+
+Check pods:
+kubectl get pods -n helm-demo
+
+12. Helm History
+helm history nginx-demo -n helm-demo
+
+Example:
+REVISION   STATUS
+1          superseded
+2          deployed
+
+This is extremely important for production troubleshooting.
+13. Rollback
+Rollback to revision 1:
+helm rollback nginx-demo 1 -n helm-demo
+
+Then:
+helm history nginx-demo -n helm-demo
+
+Important:
+Revision 1 → install
+Revision 2 → upgrade
+Revision 3 → rollback to 1
+
+A rollback creates a new revision.
+It does NOT change revision 3 back into revision 1.
+14. --set
+You can override values.yaml from the command line.
+If:
+replicaCount: 3
+
+run:
+helm template test-release . --set replicaCount=2
+
+Helm renders:
+replicas: 2
+
+So:
+values.yaml
+     ↓
+default = 3
+     ↓
+--set replicaCount=2
+     ↓
+override = 2
+
+Useful commands:
+helm install nginx-demo . --set replicaCount=5
+
+or:
+helm upgrade nginx-demo . --set replicaCount=5 -n helm-demo
+
+15. ConfigMap Through Helm
+We created:
+values.yaml
+
+with:
+config:
+  APP_ENV: production
+  LOG_LEVEL: info
+
+Then:
+templates/configmap.yaml
+
+contains the Kubernetes resource definition.
+Example:
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jfoods-nginx-config
+data:
+  APP_ENV: {{ .Values.config.APP_ENV }}
+  LOG_LEVEL: {{ .Values.config.LOG_LEVEL }}
+
+Render it:
+helm template nginx-demo .
+
+Expected:
+kind: ConfigMap
+data:
+  APP_ENV: production
+  LOG_LEVEL: info
+
+16. Use ConfigMap in Deployment
+In deployment.yaml:
+envFrom:
+  - configMapRef:
+      name: jfoods-nginx-config
+
+Then after deployment:
+kubectl exec -n helm-demo <pod-name> -- env | grep -E 'APP_ENV|LOG_LEVEL'
+
+We got:
+APP_ENV=production
+LOG_LEVEL=info
+
+So:
+values.yaml
+     ↓
+configmap.yaml
+     ↓
+ConfigMap
+     ↓
+deployment.yaml
+     ↓
+Pod
+     ↓
+Environment variables
+
+17. Secret Through Helm
+This is the next part we were about to continue.
+Basic structure:
+values.yaml
+     ↓
+templates/secret.yaml
+     ↓
+Kubernetes Secret
+     ↓
+Deployment
+     ↓
+Pod
+
+Use dummy values for learning:
+secret:
+  username: demo-user
+  password: demo-password
+
+And remember:
+ConfigMap → non-sensitive configuration
+Secret → sensitive configuration
+
+Also:
+Base64 encoding is not encryption.
+
+18. Very Important Helm Commands
+Keep this list handy:
+helm version
+helm repo list
+helm repo update
+
+helm create <chart-name>
+
+helm show chart <chart>
+helm show values <chart>
+
+helm template <release> .
+
+helm install <release> . -n <namespace>
+helm list -n <namespace>
+
+helm upgrade <release> . -n <namespace>
+
+helm history <release> -n <namespace>
+
+helm rollback <release> <revision> -n <namespace>
+
+helm get values <release> -n <namespace>
+helm get values <release> -n <namespace> --all
+
+helm get manifest <release> -n <namespace>
+
+helm uninstall <release> -n <namespace>
+
+19. The Helm Mental Model
+This is probably the most important thing to remember after your break:
+                HELM CHART
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+     values.yaml          templates/
+          │                   │
+          └─────────┬─────────┘
+                    │
+             helm template
+                    │
+                    ↓
+           Kubernetes YAML
+                    │
+             helm install
+                    │
+                    ↓
+             HELM RELEASE
+                    │
+          ┌─────────┴──────────┐
+          │                    │
+     Deployment              Service
+          │
+       ReplicaSet
+          │
+        Pods
+
+And the lifecycle:
+helm install
+     ↓
+Revision 1
+     ↓
+helm upgrade
+     ↓
+Revision 2
+     ↓
+helm rollback
+     ↓
+Revision 3
